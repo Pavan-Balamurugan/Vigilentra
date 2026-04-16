@@ -3,14 +3,14 @@
 from datetime import datetime
 from typing import Optional, Dict, List, Any
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
 
 # -- Auth --
 
 class RegisterRequest(BaseModel):
     """New user registration payload."""
-    email: EmailStr
+    email: str
     full_name: str
     institution: Optional[str] = None
     password: str
@@ -18,7 +18,7 @@ class RegisterRequest(BaseModel):
 
 class LoginRequest(BaseModel):
     """Login credentials."""
-    email: EmailStr
+    email: str
     password: str
 
 
