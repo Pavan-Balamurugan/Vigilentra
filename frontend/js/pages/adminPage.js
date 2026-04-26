@@ -12,8 +12,9 @@ import { createThreatTable } from '../components/ThreatTable.js';
 import { createAlertBanner } from '../components/AlertBanner.js';
 import { createVerdictCard } from '../components/VerdictCard.js';
 import { showModal } from '../components/Modal.js';
-import { getStats, getThreats, getAlerts } from '../api/admin.js';
+import { getStats, getThreats, getAlerts, getUsers, acknowledgeAlert } from '../api/admin.js';
 import { showToast } from '../components/Toast.js';
+import { formatDate } from '../utils/format.js';
 
 let threatPage = 1;
 const THREAT_PAGE_SIZE = 10;
@@ -45,11 +46,16 @@ export function initAdminPage() {
     const main = document.createElement('main');
     main.className = 'p-6 max-w-7xl';
 
-    // Alert banner container
+    // ===== SECTION: Overview =====
+    const overviewSection = document.createElement('div');
+    overviewSection.id = 'section-overview';
+    overviewSection.className = 'mb-8';
+
+    // Alert banner container (top of overview)
     const alertContainer = document.createElement('div');
     alertContainer.id = 'admin-alert-container';
     alertContainer.className = 'mb-4 space-y-2';
-    main.appendChild(alertContainer);
+    overviewSection.appendChild(alertContainer);
 
     // Header
     const header = document.createElement('div');
@@ -58,45 +64,85 @@ export function initAdminPage() {
         <h1 class="text-2xl font-bold text-slate-900">Security Dashboard</h1>
         <p class="text-sm text-slate-500 mt-1">Real-time threat monitoring and analytics</p>
     `;
-    main.appendChild(header);
+    overviewSection.appendChild(header);
 
     // Stat cards row
     const statsRow = document.createElement('div');
     statsRow.className = 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6';
     statsRow.id = 'admin-stats-row';
-    main.appendChild(statsRow);
+    overviewSection.appendChild(statsRow);
 
     // Charts row
     const chartsRow = document.createElement('div');
     chartsRow.className = 'grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6';
     chartsRow.id = 'admin-charts-row';
-    main.appendChild(chartsRow);
+    overviewSection.appendChild(chartsRow);
 
-    // Threat feed header
+    main.appendChild(overviewSection);
+
+    // ===== SECTION: Threat Feed =====
+    const threatSection = document.createElement('div');
+    threatSection.id = 'section-threat-feed';
+    threatSection.className = 'mb-8';
+
     const threatHeader = document.createElement('div');
     threatHeader.className = 'flex items-center justify-between mb-4';
     threatHeader.innerHTML = `
-        <h2 class="text-lg font-semibold text-slate-900">Live Threat Feed</h2>
+        <h2 class="text-xl font-bold text-slate-900">Live Threat Feed</h2>
         <span class="text-xs text-slate-400" id="threat-feed-status">Auto-refreshing every 10s</span>
     `;
-    main.appendChild(threatHeader);
+    threatSection.appendChild(threatHeader);
 
-    // Threat table container
     const threatContainer = document.createElement('div');
     threatContainer.id = 'admin-threat-container';
-    main.appendChild(threatContainer);
+    threatSection.appendChild(threatContainer);
 
+    main.appendChild(threatSection);
+
+    // ===== SECTION: Users =====
+    const usersSection = document.createElement('div');
+    usersSection.id = 'section-users';
+    usersSection.className = 'mb-8';
+
+    const usersHeader = document.createElement('div');
+    usersHeader.className = 'mb-4';
+    usersHeader.innerHTML = `
+        <h2 class="text-xl font-bold text-slate-900">Registered Users</h2>
+        <p class="text-sm text-slate-500 mt-1">All users registered on the platform</p>
+    `;
+    usersSection.appendChild(usersHeader);
+
+    const usersContainer = document.createElement('div');
+    usersContainer.id = 'admin-users-container';
+    usersContainer.innerHTML = '<p class="text-sm text-slate-400">Loading users...</p>';
+    usersSection.appendChild(usersContainer);
+
+    main.appendChild(usersSection);
+
+    // ===== SECTION: Alerts =====
+    const alertsSection = document.createElement('div');
+    alertsSection.id = 'section-alerts';
+    alertsSection.className = 'mb-8';
+
+    const alertsHeader = document.createElement('div');
+    alertsHeader.className = 'mb-4';
+    alertsHeader.innerHTML = `
+        <h2 class="text-xl font-bold text-slate-900">System Alerts</h2>
+        <p class="text-sm text-slate-500 mt-1">Alerts generated when malicious content is detected</p>
+    `;
+    alertsSection.appendChild(alertsHeader);
+
+    const alertsContainer = document.createElement('div');
+    alertsContainer.id = 'admin-alerts-container';
+    alertsContainer.innerHTML = '<p class="text-sm text-slate-400">Loading alerts...</p>';
+    alertsSection.appendChild(alertsContainer);
+
+    main.appendChild(alertsSection);
+
+    // Assemble layout
     mainContent.appendChild(main);
     layout.appendChild(mainContent);
     app.appendChild(layout);
-
-    // Sidebar navigation
-    sidebar.querySelectorAll('[data-section]').forEach(btn => {
-        btn.addEventListener('click', () => {
-            sidebar.querySelectorAll('[data-section]').forEach(b => b.classList.remove('bg-slate-800'));
-            btn.classList.add('bg-slate-800');
-        });
-    });
 
     // Load data
     loadDashboard();
@@ -109,20 +155,23 @@ export function initAdminPage() {
 }
 
 /**
- * Load all dashboard data: stats, charts, threats, alerts.
+ * Load all dashboard data: stats, charts, threats, alerts, users.
  */
 async function loadDashboard() {
     try {
-        const [stats, threats, alerts] = await Promise.all([
+        const [stats, threats, alerts, users] = await Promise.all([
             getStats(),
             getThreats({ page: 1, page_size: THREAT_PAGE_SIZE }),
             getAlerts(false),
+            getUsers(),
         ]);
 
         renderStats(stats);
         renderCharts(stats);
         renderThreats(threats);
-        renderAlerts(alerts);
+        renderAlertBanners(alerts);
+        renderUsers(users);
+        renderAlertsTable(alerts);
 
         lastAlertCount = alerts.length;
     } catch (err) {
@@ -236,19 +285,147 @@ function renderThreats(data) {
 }
 
 /**
- * Render unacknowledged alert banners.
+ * Render unacknowledged alert banners at top of dashboard.
  * @param {Array} alerts - List of alert objects.
  */
-function renderAlerts(alerts) {
+function renderAlertBanners(alerts) {
     const container = document.getElementById('admin-alert-container');
     if (!container) return;
     container.innerHTML = '';
 
-    alerts.slice(0, 3).forEach(alert => {
+    const unacked = alerts.filter(a => !a.acknowledged);
+    unacked.slice(0, 3).forEach(alert => {
         container.appendChild(createAlertBanner({
             message: alert.message,
             severity: alert.severity,
+            onDismiss: () => {
+                acknowledgeAlert(alert.id).catch(() => {});
+            },
         }));
+    });
+}
+
+/**
+ * Render the users table.
+ * @param {Array} users - List of user objects.
+ */
+function renderUsers(users) {
+    const container = document.getElementById('admin-users-container');
+    if (!container) return;
+
+    if (!users || users.length === 0) {
+        container.innerHTML = '<p class="text-sm text-slate-500">No users found.</p>';
+        return;
+    }
+
+    const rowsHtml = users.map(user => {
+        const roleBadge = user.role === 'admin'
+            ? '<span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">Admin</span>'
+            : '<span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">User</span>';
+
+        return `
+            <tr class="border-b border-slate-200 hover:bg-slate-50">
+                <td class="py-3 px-4 text-sm font-medium text-slate-900">${user.full_name}</td>
+                <td class="py-3 px-4 text-sm text-slate-600">${user.email}</td>
+                <td class="py-3 px-4 text-sm text-slate-500">${user.institution || '-'}</td>
+                <td class="py-3 px-4">${roleBadge}</td>
+                <td class="py-3 px-4 text-sm text-slate-400">${formatDate(user.created_at)}</td>
+            </tr>
+        `;
+    }).join('');
+
+    container.innerHTML = `
+        <div class="card p-0 overflow-hidden">
+            <table class="w-full text-left">
+                <thead>
+                    <tr class="bg-slate-50 border-b border-slate-200">
+                        <th class="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Name</th>
+                        <th class="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Email</th>
+                        <th class="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Institution</th>
+                        <th class="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Role</th>
+                        <th class="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Joined</th>
+                    </tr>
+                </thead>
+                <tbody>${rowsHtml}</tbody>
+            </table>
+            <div class="px-4 py-3 bg-slate-50 border-t border-slate-200 text-sm text-slate-500">
+                ${users.length} registered user${users.length !== 1 ? 's' : ''}
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * Render the alerts table in the Alerts section.
+ * @param {Array} alerts - List of alert objects.
+ */
+function renderAlertsTable(alerts) {
+    const container = document.getElementById('admin-alerts-container');
+    if (!container) return;
+
+    if (!alerts || alerts.length === 0) {
+        container.innerHTML = '<p class="text-sm text-slate-500">No alerts generated yet.</p>';
+        return;
+    }
+
+    const rowsHtml = alerts.map(alert => {
+        const severityBadge = alert.severity === 'high'
+            ? '<span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700">High</span>'
+            : '<span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Medium</span>';
+
+        const statusBadge = alert.acknowledged
+            ? '<span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700">Acknowledged</span>'
+            : '<span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-red-50 text-red-600">Unread</span>';
+
+        const ackButton = !alert.acknowledged
+            ? `<button class="text-xs text-blue-700 hover:underline font-medium" data-ack-id="${alert.id}">Mark read</button>`
+            : '';
+
+        return `
+            <tr class="border-b border-slate-200 hover:bg-slate-50">
+                <td class="py-3 px-4">${severityBadge}</td>
+                <td class="py-3 px-4 text-sm text-slate-700 max-w-md truncate" title="${alert.message}">${alert.message}</td>
+                <td class="py-3 px-4">${statusBadge}</td>
+                <td class="py-3 px-4 text-sm text-slate-400">${formatDate(alert.created_at)}</td>
+                <td class="py-3 px-4">${ackButton}</td>
+            </tr>
+        `;
+    }).join('');
+
+    container.innerHTML = `
+        <div class="card p-0 overflow-hidden">
+            <table class="w-full text-left">
+                <thead>
+                    <tr class="bg-slate-50 border-b border-slate-200">
+                        <th class="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Severity</th>
+                        <th class="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Message</th>
+                        <th class="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
+                        <th class="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Time</th>
+                        <th class="py-3 px-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">Action</th>
+                    </tr>
+                </thead>
+                <tbody>${rowsHtml}</tbody>
+            </table>
+            <div class="px-4 py-3 bg-slate-50 border-t border-slate-200 text-sm text-slate-500">
+                ${alerts.length} alert${alerts.length !== 1 ? 's' : ''} | ${alerts.filter(a => !a.acknowledged).length} unread
+            </div>
+        </div>
+    `;
+
+    // Bind acknowledge buttons
+    container.querySelectorAll('[data-ack-id]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            try {
+                await acknowledgeAlert(btn.dataset.ackId);
+                showToast({ message: 'Alert acknowledged', type: 'success' });
+                // Reload alerts
+                const updatedAlerts = await getAlerts();
+                renderAlertsTable(updatedAlerts);
+                renderAlertBanners(updatedAlerts);
+            } catch (err) {
+                showToast({ message: err.message, type: 'error' });
+            }
+        });
     });
 }
 
@@ -259,7 +436,8 @@ async function checkNewAlerts() {
     try {
         const alerts = await getAlerts(false);
         if (alerts.length > lastAlertCount) {
-            renderAlerts(alerts);
+            renderAlertBanners(alerts);
+            renderAlertsTable(alerts);
             showToast({ message: 'New threat alert received', type: 'warning' });
         }
         lastAlertCount = alerts.length;
